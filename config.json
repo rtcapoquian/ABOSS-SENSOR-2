@@ -1,0 +1,9 @@
+{
+  "detection_threshold": 0.7,
+  "required_consecutive": 2,
+  "camera_width": 160,
+  "camera_height": 120,
+  "fps": 5,
+  "boss_name": "boss",
+  "face_size": 96
+}

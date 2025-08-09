@@ -1,0 +1,8 @@
+{
+    "model_path": "model\\boss_detector.pkl",
+    "detection_threshold": 0.75,
+    "consecutive_detections": 3,
+    "camera_width": 640,
+    "camera_height": 480,
+    "fps": 10
+}
