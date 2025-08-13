@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Boss Screen Hider
-Displays working_screen.png when boss is detected in real-time.
+Boss Screen Hider - Background Monitoring with Screen Overlay
+Overlays working_screen.png on top of current screen when boss is detected.
+Runs completely in background without requiring window focus.
 """
 
 import cv2
@@ -10,7 +11,11 @@ import os
 import pickle
 import json
 import time
+import threading
 from datetime import datetime
+import sys
+import tkinter as tk
+from PIL import Image, ImageTk
 
 class BossScreenHider:
     def __init__(self, model_path="model/boss_detector.pkl", config_path="model/config.json", screen_path="working_screen.png"):
@@ -33,7 +38,13 @@ class BossScreenHider:
         self.camera_height = 480
         self.fps = 10
         
-        print("Boss Screen Hider initialized")
+        # Background monitoring
+        self.monitoring = False
+        self.monitor_thread = None
+        self.screen_hidden = False
+        self.last_detection_time = 0
+        
+        print("🎯 Boss Screen Hider initialized - Background Mode")
     
     def load_config(self):
         if os.path.exists(self.config_path):
@@ -142,83 +153,244 @@ class BossScreenHider:
             return "error", 0.0
     
     def show_working_screen(self):
+        """Display working screen as full screen overlay on top of everything"""
         if not os.path.exists(self.screen_path):
             print(f"❌ Working screen not found: {self.screen_path}")
             return
-        img = cv2.imread(self.screen_path)
-        if img is None:
-            print(f"❌ Could not load image: {self.screen_path}")
-            return
-        cv2.namedWindow('WORKING SCREEN', cv2.WND_PROP_FULLSCREEN)
-        cv2.setWindowProperty('WORKING SCREEN', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        cv2.imshow('WORKING SCREEN', img)
-        print("🖥️ Displaying working screen. Press ESC to close.")
-        while True:
-            if cv2.waitKey(100) & 0xFF == 27:
-                break
-        cv2.destroyWindow('WORKING SCREEN')
+        
+        print("🖥️ Creating screen overlay...")
+        
+        # Create tkinter overlay window
+        overlay_root = tk.Tk()
+        overlay_root.title("Working Screen")
+        
+        # Make window fullscreen and always on top
+        overlay_root.attributes('-fullscreen', True)
+        overlay_root.attributes('-topmost', True)
+        overlay_root.attributes('-alpha', 1.0)  # Fully opaque
+        overlay_root.configure(bg='black')
+        
+        # Get screen dimensions
+        screen_width = overlay_root.winfo_screenwidth()
+        screen_height = overlay_root.winfo_screenheight()
+        
+        try:
+            # Load and resize image to fit screen
+            if self.screen_path.lower().endswith('.png'):
+                pil_image = Image.open(self.screen_path)
+            else:
+                # Convert other formats using OpenCV first
+                cv_image = cv2.imread(self.screen_path)
+                cv_image_rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(cv_image_rgb)
+            
+            # Resize to screen size
+            pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
+            
+            # Convert to tkinter format
+            tk_image = ImageTk.PhotoImage(pil_image)
+            
+            # Create label to display image
+            image_label = tk.Label(overlay_root, image=tk_image, bg='black')
+            image_label.pack(fill=tk.BOTH, expand=True)
+            
+            # Keep reference to prevent garbage collection
+            image_label.image = tk_image
+            
+            print("✅ Screen overlay active - boss screen displayed")
+            
+        except Exception as e:
+            print(f"❌ Error loading image: {e}")
+            # Fallback to solid color overlay
+            fallback_label = tk.Label(overlay_root, text="WORKING...", 
+                                    font=("Arial", 48), fg="white", bg="black")
+            fallback_label.pack(expand=True)
+        
+        # Function to close overlay
+        def close_overlay():
+            overlay_root.destroy()
+            print("📱 Screen overlay closed")
+        
+        # Function to check if boss is still detected
+        def check_boss_status():
+            if not self.screen_hidden:
+                close_overlay()
+                return
+            
+            # Auto-close after 5 seconds of no boss detection
+            if time.time() - self.last_detection_time > 5.0:
+                print("� Boss gone, removing overlay...")
+                self.screen_hidden = False
+                close_overlay()
+                return
+            
+            # Check again in 1 second
+            overlay_root.after(1000, check_boss_status)
+        
+        # Bind escape key to close (emergency exit)
+        overlay_root.bind('<Escape>', lambda e: close_overlay())
+        
+        # Set window to stay hidden
+        self.screen_hidden = True
+        
+        # Start checking boss status
+        overlay_root.after(1000, check_boss_status)
+        
+        # Run the overlay (this blocks until window is closed)
+        try:
+            overlay_root.mainloop()
+        except:
+            pass
+        
+        self.screen_hidden = False
     
-    def start_monitoring(self):
-        self.load_config()
-        if not self.load_model():
-            print("❌ Cannot start without trained model")
-            return False
-        print("\n🎯 Starting BossScreenHider monitoring...")
-        print(f"Detection threshold: {self.detection_threshold}")
-        print("Press 'q' to quit.")
+    def background_monitor(self):
+        """Background monitoring thread - runs independently"""
+        print("🎥 Starting background camera monitoring...")
+        
         cap = cv2.VideoCapture(0)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
         cap.set(cv2.CAP_PROP_FPS, self.fps)
+        
         if not cap.isOpened():
             print("❌ Cannot access camera!")
-            return False
+            return
+        
+        consecutive_detections = 0
+        required_detections = 3  # Need 3 consecutive detections to trigger
+        
         try:
-            while True:
+            while self.monitoring:
+                if self.screen_hidden:
+                    # While screen is hidden, check if boss is still there
+                    time.sleep(0.5)
+                    continue
+                
                 ret, frame = cap.read()
                 if not ret:
+                    time.sleep(0.1)
                     continue
+                
+                # Process frame
                 frame = cv2.flip(frame, 1)
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                
+                # Detect faces
                 faces = self.face_cascade.detectMultiScale(
-                    gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60), maxSize=(300, 300)
+                    gray, 
+                    scaleFactor=1.1, 
+                    minNeighbors=5, 
+                    minSize=(60, 60), 
+                    maxSize=(300, 300)
                 )
-                boss_detected = False
+                
+                boss_detected_this_frame = False
+                
+                # Check each face
                 for (x, y, w, h) in faces:
                     face_roi = frame[y:y+h, x:x+w]
                     label, confidence = self.classify_face(face_roi)
+                    
                     if label == "boss" and confidence > self.detection_threshold:
-                        boss_detected = True
+                        boss_detected_this_frame = True
+                        self.last_detection_time = time.time()
                         break
-                if boss_detected:
-                    print(f"🚨 Boss detected! Hiding screen at {datetime.now().strftime('%H:%M:%S')}")
-                    cap.release()
-                    self.show_working_screen()
-                    # After hiding, re-initialize camera
-                    cap = cv2.VideoCapture(0)
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
-                    cap.set(cv2.CAP_PROP_FPS, self.fps)
-                    if not cap.isOpened():
-                        print("❌ Cannot access camera after hiding!")
-                        return False
-                # Show small preview window
-                preview = cv2.resize(frame, (320, 240))
-                cv2.imshow('Boss Monitor Preview', preview)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-        except KeyboardInterrupt:
-            print("\n🛑 Monitoring stopped.")
+                
+                # Count consecutive detections for stability
+                if boss_detected_this_frame:
+                    consecutive_detections += 1
+                    print(f"� Boss detected ({consecutive_detections}/{required_detections})")
+                else:
+                    consecutive_detections = 0
+                
+                # Trigger screen hide after consecutive detections
+                if consecutive_detections >= required_detections and not self.screen_hidden:
+                    print(f"🚨 BOSS APPROACHING! Activating screen overlay at {datetime.now().strftime('%H:%M:%S')}")
+                    # Start screen overlay in separate thread so monitoring continues
+                    overlay_thread = threading.Thread(target=self.show_working_screen, daemon=False)
+                    overlay_thread.start()
+                    consecutive_detections = 0
+                
+                # Small delay to prevent excessive CPU usage
+                time.sleep(0.1)
+        
+        except Exception as e:
+            print(f"❌ Monitoring error: {e}")
+        
         finally:
             cap.release()
+            print("📹 Camera monitoring stopped.")
+    
+    def start_monitoring(self):
+        """Start background monitoring"""
+        self.load_config()
+        
+        if not self.load_model():
+            print("❌ Cannot start without trained model")
+            return False
+        
+        print("\n🎯 Starting BossScreenHider - Background Mode")
+        print(f"📊 Detection threshold: {self.detection_threshold}")
+        print(f"📸 Camera resolution: {self.camera_width}x{self.camera_height}")
+        print(f"🖼️ Working screen: {self.screen_path}")
+        print("=" * 50)
+        print("🔥 BOSS SENSOR ACTIVE - MONITORING IN BACKGROUND")
+        print("=" * 50)
+        print("💡 Tips:")
+        print("   • The program runs in background")
+        print("   • No preview window needed")
+        print("   • Works while you're using other apps")
+        print("   • Press Ctrl+C to stop")
+        print()
+        
+        # Start background monitoring
+        self.monitoring = True
+        self.monitor_thread = threading.Thread(target=self.background_monitor, daemon=True)
+        self.monitor_thread.start()
+        
+        # Main thread handles user input
+        try:
+            print("🎮 Boss Sensor is now monitoring...")
+            print("Press Ctrl+C to stop monitoring.")
+            
+            while self.monitoring:
+                # Keep main thread alive and show status updates
+                time.sleep(5)  # Update every 5 seconds
+                status = "HIDDEN" if self.screen_hidden else "MONITORING"
+                print(f"⏰ {datetime.now().strftime('%H:%M:%S')} - Status: {status}")
+        
+        except KeyboardInterrupt:
+            print("\n🛑 Stopping Boss Sensor...")
+            self.monitoring = False
+            
+            # Wait for monitoring thread to finish
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                self.monitor_thread.join(timeout=2)
+            
+            # Close any open windows
             cv2.destroyAllWindows()
-        print("✓ Monitoring session ended.")
+            print("✅ Boss Sensor stopped successfully!")
+        
         return True
 
 def main():
-    print("=== Boss Screen Hider ===\n")
+    print("=== 🎯 BOSS SCREEN HIDER - Background Mode ===")
+    print("🚀 Advanced Boss Detection System")
+    print("📱 Runs in background - no window focus required!")
+    print()
+    
     hider = BossScreenHider()
-    hider.start_monitoring()
+    
+    if not hider.start_monitoring():
+        print("❌ Failed to start boss monitoring system")
+        print("\nMake sure you have:")
+        print("1. Trained model: python train_model.py")
+        print("2. Working screen image: working_screen.png")
+        print("3. Camera access available")
+        return 1
+    
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
