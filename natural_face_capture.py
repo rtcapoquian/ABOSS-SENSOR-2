@@ -14,28 +14,7 @@ import argparse
 class NaturalFaceCapture:
     def __init__(self):
         # Initialize face detector
-        # Try multiple paths for the Haar cascade file
-        cascade_paths = [
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml' if hasattr(cv2, 'data') else None,
-            '/usr/share/opencv/haarcascades/haarcascade_frontalface_default.xml',
-            '/usr/local/share/opencv/haarcascades/haarcascade_frontalface_default.xml',
-            'haarcascade_frontalface_default.xml'
-        ]
-        
-        self.face_cascade = None
-        for path in cascade_paths:
-            if path and os.path.exists(path):
-                self.face_cascade = cv2.CascadeClassifier(path)
-                break
-                
-        if self.face_cascade is None or self.face_cascade.empty():
-            # Download the cascade file if not found
-            import urllib.request
-            cascade_url = 'https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml'
-            cascade_file = 'haarcascade_frontalface_default.xml'
-            print(f"📥 Downloading Haar cascade file...")
-            urllib.request.urlretrieve(cascade_url, cascade_file)
-            self.face_cascade = cv2.CascadeClassifier(cascade_file)
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         
         # Create directories
         self.faces_dir = "faces"
