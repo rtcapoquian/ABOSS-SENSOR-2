@@ -222,54 +222,68 @@ class BossScreenHider:
         # Variables to track overlay state
         overlay_active = True
         
-        # Function to close overlay
-        def close_overlay():
+        # Function to close overlay ONLY on keypress
+        def close_overlay(event=None):
             nonlocal overlay_active
             if overlay_active:
                 overlay_active = False
-                print("📱 Closing screen overlay...")
-                overlay_root.quit()
-                overlay_root.destroy()
+                print("\n� Keypress detected - Closing overlay...")
+                print("✅ Program will exit now.")
+                try:
+                    overlay_root.quit()
+                    overlay_root.destroy()
+                except:
+                    pass
         
-        # Function to check if boss is still detected
-        def check_boss_status():
-            if not overlay_active:
-                return
-                
-            if not self.screen_hidden:
-                close_overlay()
-                return
-            
-            # Auto-close after 3 seconds of no boss detection (faster return)
-            if time.time() - self.last_detection_time > 3.0:
-                print("👔 Boss gone, removing overlay...")
-                self.screen_hidden = False
-                close_overlay()
-                return
-            
-            # Check again in 300ms for very responsive updates
-            if overlay_active:
-                overlay_root.after(300, check_boss_status)
+        # Make window focusable and bind ALL possible key events
+        overlay_root.configure(highlightthickness=0)
+        overlay_root.focus_set()
+        overlay_root.grab_set()  # Grab all events
         
-        # Bind keys for emergency exit
-        overlay_root.bind('<Escape>', lambda e: close_overlay())
-        overlay_root.bind('<Control-c>', lambda e: close_overlay())
+        # Bind EVERY possible key event to close
+        overlay_root.bind('<Key>', close_overlay)           # Any key
+        overlay_root.bind('<KeyPress>', close_overlay)      # Key press
+        overlay_root.bind('<Button-1>', close_overlay)      # Left mouse click
+        overlay_root.bind('<Button-2>', close_overlay)      # Middle mouse click  
+        overlay_root.bind('<Button-3>', close_overlay)      # Right mouse click
+        overlay_root.bind('<Escape>', close_overlay)        # Escape key
+        overlay_root.bind('<Return>', close_overlay)        # Enter key
+        overlay_root.bind('<space>', close_overlay)         # Spacebar
+        overlay_root.bind('<Control-c>', close_overlay)     # Ctrl+C
         
-        # Set screen as hidden
+        # Make ALL child widgets also respond to keypresses
+        def bind_to_all_children(widget):
+            widget.bind('<Key>', close_overlay)
+            widget.bind('<KeyPress>', close_overlay) 
+            widget.bind('<Button-1>', close_overlay)
+            for child in widget.winfo_children():
+                bind_to_all_children(child)
+        
+        bind_to_all_children(overlay_root)
+        
+        # Set screen as hidden - NO AUTO CLOSE
         self.screen_hidden = True
         
-        # Start checking boss status
-        overlay_root.after(300, check_boss_status)
+        # Add instruction text overlay - VERY VISIBLE
+      
         
-        # Run the overlay (blocks until closed)
+        print("⌨️ Overlay displayed - WAITING FOR KEYPRESS ONLY")
+        print("🔑 The overlay will ONLY close when you press a key!")
+        
+        # Run the overlay - BLOCKS until keypress ONLY
         try:
-            overlay_root.mainloop()
+            # Force focus multiple times to ensure it works
+            overlay_root.after(100, lambda: overlay_root.focus_force())
+            overlay_root.after(200, lambda: overlay_root.focus_set())
+            overlay_root.after(300, lambda: overlay_root.grab_set())
+            
+            overlay_root.mainloop()  # This blocks until close_overlay() is called
         except Exception as e:
             print(f"Overlay error: {e}")
         
         # Ensure screen_hidden is reset
         self.screen_hidden = False
-        print("✅ Screen overlay ended")
+        print("✅ Screen overlay ended - Program exiting")
     
     def background_monitor(self):
         """Background monitoring thread - INSTANT DETECTION"""
@@ -328,13 +342,17 @@ class BossScreenHider:
                 if (boss_detected_this_frame and 
                     not self.screen_hidden and 
                     current_time - self.last_trigger_time > trigger_cooldown):
-                  
-                    print(f"🚨 BOSS DETECTED! INSTANT HIDE at {datetime.now().strftime('%H:%M:%S.%f')[:0]}")
+                    
+                    print(f"🚨 BOSS DETECTED! SWITCHING TO WORK SCREEN at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
                     self.last_trigger_time = current_time
                     
-                    # Start screen overlay instantly in separate thread
-                    overlay_thread = threading.Thread(target=self.show_working_screen, daemon=False)
-                    overlay_thread.start()
+                    # Stop monitoring immediately after detection
+                    self.monitoring = False
+                    print("🛑 Stopping monitoring - Boss detected, mission complete!")
+                    
+                    # Show overlay and exit
+                    self.show_working_screen()
+                    break  # Exit the monitoring loop
                 
                 # Very fast monitoring for instant response
                 time.sleep(0.03)  # ~30 FPS monitoring for maximum responsiveness
@@ -375,15 +393,17 @@ class BossScreenHider:
         self.monitor_thread = threading.Thread(target=self.background_monitor, daemon=True)
         self.monitor_thread.start()
         
-        # Main thread handles user input
+        # Main thread handles user input - USER CONTROLS WHEN TO EXIT
         try:
-            print("⚡ INSTANT Boss Sensor is now monitoring...")
+            print("⚡ REAL-TIME Boss Sensor is now monitoring...")
+            print("🎯 Waiting for boss to appear...")
+            print("👁️ Camera is watching continuously...")
             print("Press Ctrl+C to stop monitoring.")
             
             while self.monitoring:
-                # Keep main thread alive and show status updates
-                time.sleep(3)  # Update every 3 seconds
-                status = "HIDDEN" if self.screen_hidden else "MONITORING"
+                # Keep main thread alive and show status updates (every 20 minutes)
+                time.sleep(1200)  # 20 minutes
+                status = "🖥️ SCREEN HIDDEN" if self.screen_hidden else "👁️ MONITORING"
                 print(f"⏰ {datetime.now().strftime('%H:%M:%S')} - Status: {status}")
         
         except KeyboardInterrupt:
