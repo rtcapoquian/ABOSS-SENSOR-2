@@ -1,3 +1,6 @@
+real time labeling
+natural face capture
+boss_screen_hider
 # Step 1: Capture boss training data
 python capture_faces.py boss 30
 
