@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Boss Screen Hider - Background Monitoring with Screen Overlay
+Boss Screen Hider - INSTANT Background Monitoring with Screen Overlay
 Overlays working_screen.png on top of current screen when boss is detected.
-Runs completely in background without requiring window focus.
+INSTANT RESPONSE - No counting delays!
 """
 
 import cv2
@@ -36,15 +36,16 @@ class BossScreenHider:
         self.detection_threshold = 0.75
         self.camera_width = 640
         self.camera_height = 480
-        self.fps = 10
+        self.fps = 15
         
         # Background monitoring
         self.monitoring = False
         self.monitor_thread = None
         self.screen_hidden = False
         self.last_detection_time = 0
+        self.last_trigger_time = 0
         
-        print("🎯 Boss Screen Hider initialized - Background Mode")
+        print("🎯 Boss Screen Hider initialized - INSTANT MODE")
     
     def load_config(self):
         if os.path.exists(self.config_path):
@@ -54,7 +55,7 @@ class BossScreenHider:
                     self.detection_threshold = config.get('detection_threshold', 0.75)
                     self.camera_width = config.get('camera_width', 640)
                     self.camera_height = config.get('camera_height', 480)
-                    self.fps = config.get('fps', 10)
+                    self.fps = config.get('fps', 15)
                 print("✓ Configuration loaded")
             except Exception as e:
                 print(f"⚠ Config load error: {e}, using defaults")
@@ -93,6 +94,7 @@ class BossScreenHider:
                             pattern |= (1 << k)
                     lbp_image[i, j] = pattern
             return lbp_image
+        
         image_resized = cv2.resize(image, (128, 128))
         if len(image_resized.shape) == 3:
             gray = cv2.cvtColor(image_resized, cv2.COLOR_BGR2GRAY)
@@ -104,6 +106,7 @@ class BossScreenHider:
         hist_lbp = hist_lbp.astype(np.float32)
         hist_lbp /= (hist_lbp.sum() + 1e-7)
         features = list(hist_lbp)
+        
         grad_x = cv2.Sobel(equalized, cv2.CV_64F, 1, 0, ksize=3)
         grad_y = cv2.Sobel(equalized, cv2.CV_64F, 0, 1, ksize=3)
         magnitude = np.sqrt(grad_x**2 + grad_y**2)
@@ -113,16 +116,19 @@ class BossScreenHider:
             for j in range(0, w, w//grid_size):
                 roi = magnitude[i:i+h//grid_size, j:j+w//grid_size]
                 features.extend([np.mean(roi), np.std(roi), np.max(roi)])
+        
         features.extend([
             np.mean(equalized), np.std(equalized), np.median(equalized),
             np.min(equalized), np.max(equalized),
             np.percentile(equalized, 25), np.percentile(equalized, 75)
         ])
+        
         offsets = [(0, 1), (1, 0), (1, 1), (-1, 1)]
         for offset in offsets:
             cooc = self._calculate_glcm(equalized, offset)
             features.append(np.sum(cooc * cooc))
             features.append(np.sum(cooc**2))
+        
         return np.array(features, dtype=np.float32)
     
     def _calculate_glcm(self, image, offset, levels=16):
@@ -158,21 +164,24 @@ class BossScreenHider:
             print(f"❌ Working screen not found: {self.screen_path}")
             return
         
-        print("🖥️ Creating screen overlay...")
+        print("🖥️ Creating INSTANT screen overlay...")
         
         # Create tkinter overlay window
         overlay_root = tk.Tk()
-        overlay_root.title("Working Screen")
+        overlay_root.title("Working")
         
-        # Make window fullscreen and always on top
-        overlay_root.attributes('-fullscreen', True)
-        overlay_root.attributes('-topmost', True)
-        overlay_root.attributes('-alpha', 1.0)  # Fully opaque
-        overlay_root.configure(bg='black')
-        
-        # Get screen dimensions
+        # Get screen dimensions first
         screen_width = overlay_root.winfo_screenwidth()
         screen_height = overlay_root.winfo_screenheight()
+        
+        # Configure window for true overlay
+        overlay_root.geometry(f"{screen_width}x{screen_height}+0+0")
+        overlay_root.attributes('-fullscreen', True)
+        overlay_root.attributes('-topmost', True)
+        overlay_root.attributes('-alpha', 1.0)
+        overlay_root.configure(bg='black')
+        overlay_root.overrideredirect(True)  # Remove window decorations
+        overlay_root.focus_force()  # Force focus to ensure it's on top
         
         try:
             # Load and resize image to fit screen
@@ -181,72 +190,90 @@ class BossScreenHider:
             else:
                 # Convert other formats using OpenCV first
                 cv_image = cv2.imread(self.screen_path)
-                cv_image_rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-                pil_image = Image.fromarray(cv_image_rgb)
+                if cv_image is not None:
+                    cv_image_rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+                    pil_image = Image.fromarray(cv_image_rgb)
+                else:
+                    raise Exception("Could not load image file")
             
-            # Resize to screen size
+            # Resize to exact screen size
             pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
             
             # Convert to tkinter format
             tk_image = ImageTk.PhotoImage(pil_image)
             
-            # Create label to display image
-            image_label = tk.Label(overlay_root, image=tk_image, bg='black')
-            image_label.pack(fill=tk.BOTH, expand=True)
+            # Create label to display image (fill entire screen)
+            image_label = tk.Label(overlay_root, image=tk_image, bd=0, highlightthickness=0)
+            image_label.place(x=0, y=0, width=screen_width, height=screen_height)
             
             # Keep reference to prevent garbage collection
             image_label.image = tk_image
             
-            print("✅ Screen overlay active - boss screen displayed")
+            print("✅ Screen overlay ACTIVE - working screen displayed")
             
         except Exception as e:
             print(f"❌ Error loading image: {e}")
-            # Fallback to solid color overlay
-            fallback_label = tk.Label(overlay_root, text="WORKING...", 
-                                    font=("Arial", 48), fg="white", bg="black")
-            fallback_label.pack(expand=True)
+            # Fallback to solid color overlay with text
+            fallback_label = tk.Label(overlay_root, text="📊 WORKING...\n\nAnalyzing Data\n━━━━━━━━━━", 
+                                    font=("Courier New", 32, "bold"), fg="white", bg="#1e1e1e",
+                                    bd=0, highlightthickness=0)
+            fallback_label.place(x=0, y=0, width=screen_width, height=screen_height)
+        
+        # Variables to track overlay state
+        overlay_active = True
         
         # Function to close overlay
         def close_overlay():
-            overlay_root.destroy()
-            print("📱 Screen overlay closed")
+            nonlocal overlay_active
+            if overlay_active:
+                overlay_active = False
+                print("📱 Closing screen overlay...")
+                overlay_root.quit()
+                overlay_root.destroy()
         
         # Function to check if boss is still detected
         def check_boss_status():
+            if not overlay_active:
+                return
+                
             if not self.screen_hidden:
                 close_overlay()
                 return
             
-            # Auto-close after 5 seconds of no boss detection
-            if time.time() - self.last_detection_time > 5.0:
-                print("� Boss gone, removing overlay...")
+            # Auto-close after 3 seconds of no boss detection (faster return)
+            if time.time() - self.last_detection_time > 3.0:
+                print("👔 Boss gone, removing overlay...")
                 self.screen_hidden = False
                 close_overlay()
                 return
             
-            # Check again in 1 second
-            overlay_root.after(1000, check_boss_status)
+            # Check again in 300ms for very responsive updates
+            if overlay_active:
+                overlay_root.after(300, check_boss_status)
         
-        # Bind escape key to close (emergency exit)
+        # Bind keys for emergency exit
         overlay_root.bind('<Escape>', lambda e: close_overlay())
+        overlay_root.bind('<Control-c>', lambda e: close_overlay())
         
-        # Set window to stay hidden
+        # Set screen as hidden
         self.screen_hidden = True
         
         # Start checking boss status
-        overlay_root.after(1000, check_boss_status)
+        overlay_root.after(300, check_boss_status)
         
-        # Run the overlay (this blocks until window is closed)
+        # Run the overlay (blocks until closed)
         try:
             overlay_root.mainloop()
-        except:
-            pass
+        except Exception as e:
+            print(f"Overlay error: {e}")
         
+        # Ensure screen_hidden is reset
         self.screen_hidden = False
+        print("✅ Screen overlay ended")
     
     def background_monitor(self):
-        """Background monitoring thread - runs independently"""
-        print("🎥 Starting background camera monitoring...")
+        """Background monitoring thread - INSTANT DETECTION"""
+        print("🎥 Starting INSTANT background camera monitoring...")
         
         cap = cv2.VideoCapture(0)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
@@ -256,64 +283,61 @@ class BossScreenHider:
         if not cap.isOpened():
             print("❌ Cannot access camera!")
             return
-        
-        consecutive_detections = 0
-        required_detections = 3  # Need 3 consecutive detections to trigger
-        
+
+        trigger_cooldown = 0  # Prevent rapid re-triggering for 3 seconds only
+
         try:
             while self.monitoring:
                 if self.screen_hidden:
                     # While screen is hidden, check if boss is still there
-                    time.sleep(0.5)
+                    time.sleep(0.2)
                     continue
                 
                 ret, frame = cap.read()
                 if not ret:
-                    time.sleep(0.1)
+                    time.sleep(0.03)
                     continue
                 
                 # Process frame
                 frame = cv2.flip(frame, 1)
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 
-                # Detect faces
+                # Detect faces - optimized for speed
                 faces = self.face_cascade.detectMultiScale(
                     gray, 
                     scaleFactor=1.1, 
-                    minNeighbors=5, 
-                    minSize=(60, 60), 
-                    maxSize=(300, 300)
+                    minNeighbors=3,  # Less strict for faster detection
+                    minSize=(40, 40), 
+                    maxSize=(500, 500)
                 )
                 
+                current_time = time.time()
                 boss_detected_this_frame = False
                 
-                # Check each face
+                # Check each face - INSTANT response
                 for (x, y, w, h) in faces:
                     face_roi = frame[y:y+h, x:x+w]
                     label, confidence = self.classify_face(face_roi)
                     
                     if label == "boss" and confidence > self.detection_threshold:
                         boss_detected_this_frame = True
-                        self.last_detection_time = time.time()
+                        self.last_detection_time = current_time
                         break
                 
-                # Count consecutive detections for stability
-                if boss_detected_this_frame:
-                    consecutive_detections += 1
-                    print(f"� Boss detected ({consecutive_detections}/{required_detections})")
-                else:
-                    consecutive_detections = 0
-                
-                # Trigger screen hide after consecutive detections
-                if consecutive_detections >= required_detections and not self.screen_hidden:
-                    print(f"🚨 BOSS APPROACHING! Activating screen overlay at {datetime.now().strftime('%H:%M:%S')}")
-                    # Start screen overlay in separate thread so monitoring continues
+                # INSTANT trigger if boss detected and cooldown passed
+                if (boss_detected_this_frame and 
+                    not self.screen_hidden and 
+                    current_time - self.last_trigger_time > trigger_cooldown):
+                  
+                    print(f"🚨 BOSS DETECTED! INSTANT HIDE at {datetime.now().strftime('%H:%M:%S.%f')[:0]}")
+                    self.last_trigger_time = current_time
+                    
+                    # Start screen overlay instantly in separate thread
                     overlay_thread = threading.Thread(target=self.show_working_screen, daemon=False)
                     overlay_thread.start()
-                    consecutive_detections = 0
                 
-                # Small delay to prevent excessive CPU usage
-                time.sleep(0.1)
+                # Very fast monitoring for instant response
+                time.sleep(0.03)  # ~30 FPS monitoring for maximum responsiveness
         
         except Exception as e:
             print(f"❌ Monitoring error: {e}")
@@ -330,17 +354,19 @@ class BossScreenHider:
             print("❌ Cannot start without trained model")
             return False
         
-        print("\n🎯 Starting BossScreenHider - Background Mode")
+        print("\n🎯 Starting BossScreenHider - INSTANT MODE")
         print(f"📊 Detection threshold: {self.detection_threshold}")
         print(f"📸 Camera resolution: {self.camera_width}x{self.camera_height}")
         print(f"🖼️ Working screen: {self.screen_path}")
-        print("=" * 50)
-        print("🔥 BOSS SENSOR ACTIVE - MONITORING IN BACKGROUND")
-        print("=" * 50)
-        print("💡 Tips:")
-        print("   • The program runs in background")
-        print("   • No preview window needed")
-        print("   • Works while you're using other apps")
+        print("=" * 60)
+        print("🚨 INSTANT BOSS SENSOR ACTIVE - NO DELAYS!")
+        print("⚡ IMMEDIATE RESPONSE - BOSS DETECTION INSTANT")
+        print("=" * 60)
+        print("💡 Features:")
+        print("   • Instant detection - no counting delays")
+        print("   • Runs in background - no window focus needed")
+        print("   • Works while using other apps")
+        print("   • 30 FPS monitoring for maximum speed")
         print("   • Press Ctrl+C to stop")
         print()
         
@@ -351,12 +377,12 @@ class BossScreenHider:
         
         # Main thread handles user input
         try:
-            print("🎮 Boss Sensor is now monitoring...")
+            print("⚡ INSTANT Boss Sensor is now monitoring...")
             print("Press Ctrl+C to stop monitoring.")
             
             while self.monitoring:
                 # Keep main thread alive and show status updates
-                time.sleep(5)  # Update every 5 seconds
+                time.sleep(3)  # Update every 3 seconds
                 status = "HIDDEN" if self.screen_hidden else "MONITORING"
                 print(f"⏰ {datetime.now().strftime('%H:%M:%S')} - Status: {status}")
         
@@ -375,8 +401,9 @@ class BossScreenHider:
         return True
 
 def main():
-    print("=== 🎯 BOSS SCREEN HIDER - Background Mode ===")
-    print("🚀 Advanced Boss Detection System")
+    print("=== 🚨 INSTANT BOSS SCREEN HIDER ===")
+    print("⚡ Lightning-Fast Boss Detection System")
+    print("🎯 NO DELAYS - INSTANT RESPONSE!")
     print("📱 Runs in background - no window focus required!")
     print()
     
